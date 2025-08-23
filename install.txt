@@ -1,0 +1,5 @@
+npm install
+npm i jsonwebtoken argon2 cookie-parser
+npm i pg dotenv
+npm i -D zod
+
