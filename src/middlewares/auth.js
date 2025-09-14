@@ -1,17 +1,18 @@
-const { verifyAccess } = require('../utils/jwt');
+// src/middlewares/auth.js
+const jwt = require('jsonwebtoken');
 
 function requireAuth(req, res, next) {
-  const header = req.headers.authorization || '';
-  const [scheme, token] = header.split(' ');
-  if (scheme !== 'Bearer' || !token) {
-    return res.status(401).json({ error: 'Token requerido' });
-  }
   try {
-    const payload = verifyAccess(token); // { sub, email }
-    req.user = payload; // lo guardamos en req.user
+    const h = req.headers?.authorization || '';
+    const token = h.startsWith('Bearer ') ? h.slice(7) : null;
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    // payload debería tener { sub, email, iat, exp }
+    req.user = payload;
     next();
   } catch (e) {
-    return res.status(401).json({ error: 'Token inválido o expirado' });
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 }
 

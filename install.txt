@@ -3,3 +3,9 @@ npm i jsonwebtoken argon2 cookie-parser
 npm i pg dotenv
 npm i -D zod
 
+npm i express cors morgan pg dotenv uuid multer xmlbuilder2
+npm i -D nodemon
+
+npm i xmlbuilder2 multer
+
+npm i multer

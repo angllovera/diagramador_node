@@ -1,25 +1,14 @@
 const { Pool } = require('pg');
-const env = require('../config/env');
 
 const pool = new Pool({
-  host: env.PGHOST,
-  port: env.PGPORT,
-  user: env.PGUSER,
-  password: env.PGPASSWORD,
-  database: env.PGDATABASE,
-  ssl: env.PGSSL ? { rejectUnauthorized: false } : false
+  host: process.env.PGHOST,
+  port: Number(process.env.PGPORT || 5432),
+  user: process.env.PGUSER,
+  password: process.env.PGPASSWORD,
+  database: process.env.PGDATABASE,
+  ssl: String(process.env.PGSSL || '').toLowerCase() === 'true'
+       ? { rejectUnauthorized: false }
+       : false
 });
 
-async function check() {
-  const { rows } = await pool.query('SELECT NOW() now');
-  console.log('✅ PostgreSQL OK:', rows[0].now);
-}
-check().catch(err => { console.error('❌ DB error:', err.message); process.exit(1); });
-
-async function query(text, params) {
-  return pool.query(text, params);
-}
-
-process.on('SIGINT', async () => { await pool.end(); process.exit(0); });
-
-module.exports = { pool, query };
+module.exports = { pool, query: (t, p) => pool.query(t, p) };

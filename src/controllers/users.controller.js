@@ -15,7 +15,9 @@ exports.list = async (_req, res, next) => {
 // GET /api/users/:id
 exports.get = async (req, res, next) => {
   try {
-    const id = Number(req.params.id);
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id))
+      return res.status(400).json({ error: "Invalid id" });
     const { rows } = await query(
       "SELECT id, name, email, created_at FROM users WHERE id = $1",
       [id]
@@ -47,7 +49,9 @@ exports.create = async (req, res, next) => {
 // PUT /api/users/:id
 exports.update = async (req, res, next) => {
   try {
-    const id = Number(req.params.id);
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id))
+      return res.status(400).json({ error: "Invalid id" });
     const { name, email } = req.body || {};
     const { rows } = await query(
       `UPDATE users
@@ -78,7 +82,12 @@ exports.remove = async (req, res, next) => {
 // GET /api/users/me
 exports.me = async (req, res, next) => {
   try {
-    const id = Number(req.user.sub); // sub del token
+    // tu middleware pone req.user = { id, email, ... }
+    const id = parseInt(req.user?.id ?? req.user?.sub, 10);
+    if (!Number.isInteger(id)) {
+      return res.status(401).json({ error: "No auth context" });
+    }
+
     const { rows } = await query(
       "SELECT id, name, email, created_at FROM users WHERE id = $1",
       [id]
