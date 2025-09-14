@@ -11,6 +11,7 @@ const authRoutes = require("./routes/auth.routes");
 const usersRoutes = require("./routes/users.routes");
 const projectsRoutes = require("./routes/projects.routes");
 const importRoutes = require("./routes/import.routes"); // 👈 NUEVO (no olvides montarlo abajo)
+const exportRoutes   = require('./routes/export.routes');
 
 const app = express();
 
@@ -40,6 +41,7 @@ app.use("/api/users", usersRoutes);
 app.use("/api/projects", projectsRoutes);
 app.use("/api/diagrams", diagramsRoutes);
 app.use("/api/import", importRoutes); // 👈 ahora sí existe POST /api/import/db
+app.use('/api/export', exportRoutes);
 
 // Healthcheck sencillo
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
