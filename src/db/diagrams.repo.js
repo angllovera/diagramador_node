@@ -12,8 +12,11 @@ const SELECT_COLS = `
   updated_at  AS "updatedAt"
 `;
 
-// ejemplo de create
 async function create({ projectId, name, kind, modelJson }) {
+  const payload = typeof modelJson === "string"
+    ? modelJson
+    : JSON.stringify(modelJson ?? { class: "go.GraphLinksModel", nodeDataArray: [], linkDataArray: [] });
+
   const { rows } = await pool.query(
     `
     INSERT INTO public.diagrams (id, project_id, name, kind, model_json)
@@ -21,7 +24,7 @@ async function create({ projectId, name, kind, modelJson }) {
     RETURNING id, project_id AS "projectId", name, kind, model_json AS "modelJson",
               created_at AS "createdAt", updated_at AS "updatedAt"
     `,
-    [projectId, name, kind || null, JSON.stringify(modelJson ?? {})]
+    [projectId, name, kind || null, payload]
   );
   return rows[0];
 }
@@ -52,24 +55,33 @@ async function update(id, { name, kind, modelJson, xmiCached }, authorId) {
   const vals = [];
   let i = 1;
 
-  if (typeof name !== "undefined") {
-    sets.push(`name = $${i++}`);
-    vals.push(name);
-  }
-  if (typeof kind !== "undefined") {
-    sets.push(`kind = $${i++}`);
-    vals.push(kind);
-  }
-  if (typeof modelJson !== "undefined") {
-    sets.push(`model_json = $${i++}::jsonb`);
-    vals.push(JSON.stringify(modelJson));
-  }
-  if (typeof xmiCached !== "undefined") {
-    sets.push(`xmi_cached = $${i++}`);
-    vals.push(xmiCached);
-  }
-  sets.push(`updated_at = now()`);
+  if (typeof name !== "undefined") { sets.push(`name = $${i++}`); vals.push(name); }
+  if (typeof kind !== "undefined") { sets.push(`kind = $${i++}`); vals.push(kind); }
 
+  if (typeof modelJson !== "undefined") {
+    // Blindaje: NO sobreescribir con vacío si lo actual tiene datos
+    const current = await byId(id);
+    let incoming = typeof modelJson === "string" ? JSON.parse(modelJson) : (modelJson ?? {});
+    const incEmpty = !(incoming?.nodeDataArray?.length) && !(incoming?.linkDataArray?.length);
+
+    let curHasData = false;
+    try {
+      const cur = typeof current?.modelJson === "string" ? JSON.parse(current.modelJson) : (current?.modelJson ?? {});
+      curHasData = (cur?.nodeDataArray?.length || 0) > 0 || (cur?.linkDataArray?.length || 0) > 0;
+    } catch {}
+
+    if (incEmpty && curHasData) {
+      // devolvemos el actual sin tocar BD
+      return current;
+    }
+
+    sets.push(`model_json = $${i++}::jsonb`);
+    vals.push(typeof modelJson === "string" ? modelJson : JSON.stringify(modelJson ?? {}));
+  }
+
+  if (typeof xmiCached !== "undefined") { sets.push(`xmi_cached = $${i++}`); vals.push(xmiCached); }
+
+  sets.push(`updated_at = now()`);
   vals.push(id);
 
   const { rows } = await pool.query(
@@ -84,14 +96,16 @@ async function update(id, { name, kind, modelJson, xmiCached }, authorId) {
 
   const d = rows[0] || null;
 
-  // Guarda versión si se actualiza el modelo
   if (d && typeof modelJson !== "undefined") {
     await pool.query(
       `
       INSERT INTO public.diagram_versions (diagram_id, model_json, xmi_cached, author_id, created_at)
       VALUES ($1, $2::jsonb, $3, $4, now())
       `,
-      [id, JSON.stringify(modelJson ?? {}), xmiCached ?? null, authorId ?? null]
+      [id,
+       typeof modelJson === "string" ? modelJson : JSON.stringify(modelJson ?? {}),
+       xmiCached ?? null,
+       authorId ?? null]
     );
   }
   return d;
