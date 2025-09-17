@@ -11,3 +11,5 @@ npm i xmlbuilder2 multer
 npm i multer
 npm i archiver uuid
 npm i xmlbuilder2
+
+npm i socket.io
