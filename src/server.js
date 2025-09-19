@@ -1,19 +1,18 @@
 // src/server.js
-require('dotenv').config();
-const http = require('http');
-const app = require('./app');           // ✅ sigue igual
-const { initRealtime } = require('./utils/realtime'); // ✅ NUEVO
+require("dotenv").config();
+const http = require("http");
+const app = require("./app");                      // 👈 ya NO redeclaramos app
+const { initRealtime } = require("./utils/realtime");
 
 const PORT = process.env.PORT || 3000;
 
-// 1) Server HTTP de Express
 const httpServer = http.createServer(app);
 
-// 2) Inicializa Socket.IO en el MISMO puerto
+// Socket.IO en el mismo servidor/puerto
 const io = initRealtime(httpServer, {
   cors: {
-    origin: ['http://localhost:5173'],           // agrega más orígenes si usas otros puertos
-    methods: ['GET', 'POST'],
+    origin: [process.env.FRONTEND_ORIGIN || "http://localhost:5173"],
+    methods: ["GET", "POST"],
     credentials: true,
   },
 });
@@ -22,12 +21,12 @@ httpServer.listen(PORT, () => {
   console.log(`🚀 API escuchando en http://localhost:${PORT}`);
 });
 
-// 🧹 Cierre ordenado
+// Cierre ordenado
 function shutdown(signal) {
   console.log(`${signal} recibido. Cerrando...`);
-  io.close(() => {                               // cierra websockets
-    httpServer.close(() => process.exit(0));     // cierra HTTP
+  io.close(() => {
+    httpServer.close(() => process.exit(0));
   });
 }
-process.on('SIGINT', () => shutdown('SIGINT'));
-process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));

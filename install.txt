@@ -13,3 +13,5 @@ npm i archiver uuid
 npm i xmlbuilder2
 
 npm i socket.io
+
+npm i openai zod pg
