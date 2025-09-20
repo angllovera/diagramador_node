@@ -13,6 +13,7 @@
   "dependencies": {
     "archiver": "^7.0.1",
     "argon2": "^0.44.0",
+    "change-case": "^5.4.4",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^17.2.2",
@@ -27,7 +28,6 @@
     "xmlbuilder2": "^3.1.1"
   },
   "devDependencies": {
-    "nodemon": "^3.1.10",
-    "zod": "^4.1.9"
+    "nodemon": "^3.1.10"
   }
 }

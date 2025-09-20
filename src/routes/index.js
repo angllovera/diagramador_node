@@ -9,6 +9,7 @@ const diagramsRoutes = require("./diagrams.routes");
 const importRoutes = require("./import.routes");
 const exportRoutes = require("./export.routes");
 const aiRoutes = require("./ai"); // IA
+const generateSpringBootRoutes = require('./generate.springboot.routes');
 
 router.use("/auth", authRoutes);
 router.use("/users", usersRoutes);
@@ -17,5 +18,6 @@ router.use("/diagrams", diagramsRoutes);
 router.use("/import", importRoutes);
 router.use("/export", exportRoutes);
 router.use("/ai", aiRoutes);       // => /api/ai/...
+router.use('/generate', generateSpringBootRoutes);
 
 module.exports = router;

@@ -21,10 +21,13 @@ app.use(
 
 // Middlewares
 app.use(cookieParser());
+// ⬇️ subimos el límite por si el diagrama es grande
 app.use(express.json({ limit: "25mb" }));
+app.use(express.urlencoded({ extended: true, limit: "25mb" }));
+
 if (process.env.NODE_ENV !== "production") app.use(morgan("dev"));
 
-// Montar todas las rutas bajo /api
+// Montar todas las rutas bajo /api (¡una sola vez!)
 app.use("/api", apiRoutes);
 
 // Healthcheck
