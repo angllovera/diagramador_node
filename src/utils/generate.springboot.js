@@ -127,6 +127,11 @@ function generateSpringBootProject(model, { groupId = 'com.example', artifactId 
     files[`${pSvc}${c.name}Service.java`]     = serviceJava(groupId, artifactId, c);
     files[`${pCtrl}${c.name}Controller.java`] = controllerJava(groupId, artifactId, c);
   }
+
+  // === Archivos extra: Postman y HTTP ===
+  files[`${root}postman/${artifactId}-api.postman_collection.json`] = postmanCollection(artifactId, m);
+  files[`${root}http/${artifactId}.http`]                           = httpClientFile(m);
+
   return files;
 
   // ----------- templates -----------
@@ -479,6 +484,118 @@ public class ${c.name}Controller {
   @DeleteMapping("/{id}") public void delete(@PathVariable ${idT} id) { service.delete(id); }
 }
 `; }
+
+  // ============ Postman & HTTP generators ============
+  function sampleValue(attr) {
+    const t = (attr.type || 'string').toLowerCase();
+    if (attr.id) return undefined; // no incluir id en Request
+    switch (t) {
+      case 'int':
+      case 'integer': return 1;
+      case 'long':
+      case 'bigint':
+      case 'number':  return 1;
+      case 'float':
+      case 'double':  return 1000.0;
+      case 'decimal': return 1000.0;
+      case 'bool':
+      case 'boolean': return true;
+      case 'date':     return '2025-01-01';
+      case 'time':     return '12:34:56';
+      case 'datetime':
+      case 'timestamp':return '2025-01-01T12:34:56';
+      default:         return attr.name.toLowerCase() === 'email' ? 'demo@example.com' : 'demo';
+    }
+  }
+
+  function entityRequestBody(cls) {
+    const body = {};
+    (cls.attributes || []).forEach(a => {
+      if (a.id) return;
+      body[a.name] = sampleValue(a);
+    });
+    return body;
+  }
+
+  function postmanCollection(artifactId, model) {
+    const items = (model.classes || []).map(cls => {
+      const base = `/api/${paramCase(plural(cls.name))}`;
+      const body = entityRequestBody(cls);
+      const namePlural = plural(cls.name);
+
+      function req(name, method, urlSuffix, hasBody = false) {
+        const r = {
+          name,
+          request: {
+            method,
+            header: [{ key: 'Content-Type', value: 'application/json' }],
+            url: { raw: `{{baseUrl}}${base}${urlSuffix}`, host: ['{{baseUrl}}'], path: [base.replace(/^\//,'')].concat(urlSuffix.replace(/^\//,'').split('/').filter(Boolean)) }
+          }
+        };
+        if (hasBody) {
+          r.request.body = { mode: 'raw', raw: JSON.stringify(body, null, 2) };
+        }
+        return r;
+      }
+
+      return {
+        name: namePlural,
+        item: [
+          req(`Listar ${namePlural}`, 'GET', ''),
+          req(`Obtener ${cls.name} por id`, 'GET', '/1'),
+          req(`Crear ${cls.name}`, 'POST', '', true),
+          req(`Actualizar ${cls.name}`, 'PUT', '/1', true),
+          req(`Eliminar ${cls.name}`, 'DELETE', '/1')
+        ]
+      };
+    });
+
+    const collection = {
+      info: {
+        _postman_id: '00000000-0000-0000-0000-000000000000',
+        name: `${artifactId}-api`,
+        schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json'
+      },
+      item: items,
+      variable: [{ key: 'baseUrl', value: 'http://localhost:8080' }]
+    };
+    return JSON.stringify(collection, null, 2);
+  }
+
+  function httpClientFile(model) {
+    let out = `@baseUrl = http://localhost:8080
+
+`;
+    (model.classes || []).forEach(cls => {
+      const base = `/api/${paramCase(plural(cls.name))}`;
+      const body = entityRequestBody(cls);
+
+      out +=
+`### ${cls.name} - Listar
+GET {{baseUrl}}${base}
+
+### ${cls.name} - Obtener por id
+GET {{baseUrl}}${base}/1
+
+### ${cls.name} - Crear
+POST {{baseUrl}}${base}
+Content-Type: application/json
+
+${JSON.stringify(body, null, 2)}
+
+### ${cls.name} - Actualizar
+PUT {{baseUrl}}${base}/1
+Content-Type: application/json
+
+${JSON.stringify(body, null, 2)}
+
+### ${cls.name} - Eliminar
+DELETE {{baseUrl}}${base}/1
+
+`;
+    });
+    return out;
+  }
 }
 
 module.exports = { generateSpringBootProject };
