@@ -9,15 +9,23 @@ const apiRoutes = require("./routes"); // 👉 ./routes/index.js
 
 const app = express();
 
-// CORS (ajusta el origin si corresponde)
-app.use(
-  cors({
-    origin: process.env.FRONTEND_ORIGIN || "http://localhost:5173",
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
+const ORIGIN = process.env.FRONTEND_ORIGIN || "http://localhost:5173";
+
+// CORS (incluye X-Share-Token y maneja preflight)
+const corsOptions = {
+  origin: ORIGIN,
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Share-Token", // 👈 clave
+    "x-share-token", // (extra por si acaso)
+  ],
+  optionsSuccessStatus: 204,
+};
+
+app.use(cors(corsOptions));
 
 // Middlewares
 app.use(cookieParser());

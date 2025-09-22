@@ -22,3 +22,6 @@ npm i archiver change-case
 ##solucion al error de install archiver
 npm rm zod
 npm i openai@5.21.0 archiver change-case
+
+npm i nanoid
+npm i cors
