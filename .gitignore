@@ -1,0 +1,1 @@
+echo -e "\n.env\n.env.*\n!.env.example\n" >> .gitignore
