@@ -6,7 +6,7 @@ const router = Router();
 
 router.post("/xmi", async (req, res) => {
   try {
-    // 1) Leer modelo
+    // 1) Modelo
     let model = req.body?.model;
     if (typeof model === "string") {
       try { model = JSON.parse(model); } catch {}
@@ -19,7 +19,7 @@ router.post("/xmi", async (req, res) => {
     const links = Array.isArray(model.linkDataArray) ? model.linkDataArray : [];
 
     // === Helpers ============================================================
-    const sanitize = (v) => String(v ?? '').replace(/[^a-zA-Z0-9_]/g, "");
+    const sanitize = (v) => String(v ?? "").replace(/[^a-zA-Z0-9_]/g, "");
     const idOf = (prefix, key) => `${prefix}_${sanitize(key)}`;
     const nodeKey = (n) => n?.key ?? n?.id ?? n?.name ?? Math.random().toString(36).slice(2);
 
@@ -27,12 +27,12 @@ router.post("/xmi", async (req, res) => {
     const attrId  = (c, i) => idOf("att", `${nodeKey(c)}_${i}`);
     const opId    = (c, i) => idOf("op",  `${nodeKey(c)}_${i}`);
     const retId   = (c, i) => idOf("ret", `${nodeKey(c)}_${i}`);
-    const assocId = (l) => idOf("assoc", l?.key ?? `${l?.from}_${l?.to}`);
-    const endId   = (l, side) => idOf("end", `${l?.key ?? `${l?.from}_${l?.to}`}_${side}`);
-    const genId   = (l) => idOf("gen",  l?.key ?? `${l?.from}_${l?.to}`);
-    const depId   = (l) => idOf((l?.category || "dep"), l?.key ?? `${l?.from}_${l?.to}`);
-    const lvId    = (suf) => idOf("lv", suf);
-    const uvId    = (suf) => idOf("uv", suf);
+    const assocId = (l)    => idOf("assoc", l?.key ?? l?.id ?? `${l?.from}_${l?.to}`);
+    const endId   = (l,s)  => idOf("end",  `${l?.key ?? l?.id ?? `${l?.from}_${l?.to}`}_${s}`);
+    const genId   = (l)    => idOf("gen",  l?.key ?? l?.id ?? `${l?.from}_${l?.to}`);
+    const depId   = (l)    => idOf((l?.category || "dep"), l?.key ?? l?.id ?? `${l?.from}_${l?.to}`);
+    const lvId    = (suf)  => idOf("lv", suf);
+    const uvId    = (suf)  => idOf("uv", suf);
 
     const TYPE_MAP = {
       int: "Integer", integer: "Integer", number: "Integer",
@@ -41,7 +41,7 @@ router.post("/xmi", async (req, res) => {
       bool: "Boolean", boolean: "Boolean",
       date: "Date", datetime: "DateTime", void: "Void"
     };
-    const normalizeTypeName = (t) => TYPE_MAP[String(t || 'string').toLowerCase()] || "String";
+    const normalizeTypeName = (t) => TYPE_MAP[String(t || "string").toLowerCase()] || "String";
 
     // === Documento XMI ======================================================
     const doc = create({ version: "1.0", encoding: "UTF-8" }).ele("xmi:XMI", {
@@ -61,16 +61,16 @@ router.post("/xmi", async (req, res) => {
       name: "Logical View"
     });
 
-    // PrimitiveTypes
+    // PrimitiveTypes (útil para EA)
     const primPkg = modelEl.ele("packagedElement", {
       "xmi:type": "uml:Package",
       "xmi:id": "pkg_primitives",
       name: "PrimitiveTypes"
     });
-    const PRIMS = ["String","Integer","Boolean","Real","Date","DateTime","Void"];
+    const PRIMS = ["String", "Integer", "Boolean", "Real", "Date", "DateTime", "Void"];
     const primId = (n) => `prim_${n}`;
     const primIds = {};
-    PRIMS.forEach(n => {
+    PRIMS.forEach((n) => {
       primPkg.ele("packagedElement", {
         "xmi:type": "uml:PrimitiveType",
         "xmi:id": primId(n),
@@ -80,14 +80,13 @@ router.post("/xmi", async (req, res) => {
     });
 
     // === Clases =============================================================
-    const classIndex = new Map(); // k -> node
-    const classElIdx = new Map(); // k -> xml element
+    const classIndex = new Map(); // k -> node (para resolver links)
+    const classElIdx = new Map(); // k -> xml element (para anidar generalizations)
 
-    // Acepta nodos sin category o category 'entity'/'table'
     nodes
       .filter(n => {
-        const cat = String(n?.category ?? 'class').toLowerCase();
-        return !n?.category || cat === 'class' || cat === 'entity' || cat === 'table';
+        const cat = String(n?.category ?? "class").toLowerCase();
+        return !n.category || ["class","entity","table"].includes(cat);
       })
       .forEach((n) => {
         const k = nodeKey(n);
@@ -103,18 +102,18 @@ router.post("/xmi", async (req, res) => {
 
         if (n?.abstract) cls.att("isAbstract", "true");
 
-        // atributos (acepta strings "id: int" o objetos)
+        // atributos (admite string "id: int" o objeto)
         const attrList = n?.attributes || n?.attrs || n?.properties || [];
         attrList.forEach((a, i) => {
           let name = a?.name, type = a?.type, visibility = a?.visibility;
-          if (typeof a === 'string') {
-            const m = a.split(':');
-            name = (m[0] || `attr${i+1}`).trim();
-            type = (m[1] || 'string').trim();
+          if (typeof a === "string") {
+            const m = a.split(":");
+            name = (m[0] || `attr${i + 1}`).trim();
+            type = (m[1] || "string").trim();
           }
           const at = cls.ele("ownedAttribute", {
             "xmi:id": attrId(n, i),
-            name: name || `attr${i+1}`,
+            name: name || `attr${i + 1}`,
             visibility: visibility || "private"
           });
           const tName = normalizeTypeName(type);
@@ -137,7 +136,7 @@ router.post("/xmi", async (req, res) => {
         (n?.operations || []).forEach((op, i) => {
           const m = cls.ele("ownedOperation", {
             "xmi:id": opId(n, i),
-            name: op?.name || `op${i+1}`,
+            name: op?.name || `op${i + 1}`,
             visibility: op?.visibility || "public"
           });
           if (op?.type) {
@@ -187,32 +186,43 @@ router.post("/xmi", async (req, res) => {
       if (!fromNode || !toNode) return;
 
       if (cat === "association" || cat === "aggregation" || cat === "composition") {
-        const aId = assocId(l);
+        // IDs precomputados
+        const aId    = assocId(l);
+        const endAId = endId(l, "A");
+        const endBId = endId(l, "B");
+
         const assoc = pkg.ele("packagedElement", {
           "xmi:type": "uml:Association",
           "xmi:id": aId,
-          name: l?.name || undefined
+          name: l?.name || undefined,
+          memberEnd: `${endAId} ${endBId}`
         });
 
+        // Extremo A (hacia 'to')
         const endA = assoc.ele("ownedEnd", {
-          "xmi:id": endId(l, "A"),
-          type: classId(toNode)
+          "xmi:id": endAId,
+          type: classId(toNode),
+          association: aId,
+          ...(l?.toRole ? { name: String(l.toRole) } : {})
         });
+        // Extremo B (hacia 'from')
         const endB = assoc.ele("ownedEnd", {
-          "xmi:id": endId(l, "B"),
-          type: classId(fromNode)
+          "xmi:id": endBId,
+          type: classId(fromNode),
+          association: aId,
+          ...(l?.fromRole ? { name: String(l.fromRole) } : {})
         });
 
         const fromMult = l?.fromMultiplicity ?? l?.multiplicityFrom ?? null;
         const toMult   = l?.toMultiplicity   ?? l?.multiplicityTo   ?? null;
-        setMultiplicity(endA, toMult, `${aId}_A`);
+        setMultiplicity(endA, toMult,   `${aId}_A`);
         setMultiplicity(endB, fromMult, `${aId}_B`);
 
         if (cat === "aggregation") endA.att("aggregation", "shared");
         if (cat === "composition") endA.att("aggregation", "composite");
 
-        assoc.att("memberEnd", `${endA.att("xmi:id")} ${endB.att("xmi:id")}`);
       } else if (cat === "generalization") {
+        // subclase = from, superclase = to
         const subEl = classElIdx.get(fromNode._k);
         if (subEl) {
           subEl.ele("generalization", {
@@ -220,6 +230,7 @@ router.post("/xmi", async (req, res) => {
             general: classId(toNode)
           });
         } else {
+          // fallback (raro que falte)
           pkg.ele("generalization", {
             "xmi:id": genId(l),
             general: classId(toNode)
@@ -237,7 +248,6 @@ router.post("/xmi", async (req, res) => {
     });
 
     const xml = doc.end({ prettyPrint: true });
-
     res.setHeader("Content-Type", "application/xml; charset=utf-8");
     res.setHeader("Content-Disposition", 'attachment; filename="diagram_ea.xmi"');
     return res.send(xml);
