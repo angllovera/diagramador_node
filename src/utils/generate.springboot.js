@@ -4,27 +4,21 @@ function generateSpringBootProject(model, { groupId = 'com.example', artifactId 
   const m = normalizeInput(model);
 
   if (!m.classes?.length) {
-    throw new Error('El modelo no contiene clases (nodeDataArray vacío o sin category="class").');
+    throw new Error('El modelo no contiene clases válidas (sin nombre/atributos).');
   }
 
-  // ====== HELPERS ======
-  function idAttrOf(c) {
-    return (c.attributes || []).find(a => a.id);
-  }
+  // ====== HELPERS (function declarations => hoisted) ======
+  function idAttrOf(c) { return (c.attributes || []).find(a => a.id); }
 
-  // Tipo Java a usar en repos/service para el ID
-  // Forzamos numérico: Integer/Long. Cualquier cosa no reconocida -> Long.
   function idType(c) {
     const id = idAttrOf(c);
     const t = (id?.type || '').toLowerCase();
-    if (!id) return 'java.lang.Long';                 // si no marcaron id, asumimos Long
+    if (!id) return 'java.lang.Long';
     if (t === 'int' || t === 'integer') return 'java.lang.Integer';
     if (t === 'bigint' || t === 'long' || t === 'number') return 'java.lang.Long';
-    // cualquier otro (uuid/string/etc.) => Long autoincremental
     return 'java.lang.Long';
   }
 
-  // Tipo Java de un atributo (para campos/DTO)
   function mapType(t) {
     const type = (t || 'string').toLowerCase();
     switch (type) {
@@ -42,68 +36,261 @@ function generateSpringBootProject(model, { groupId = 'com.example', artifactId 
       case 'time':     return { name: 'java.time.LocalTime', imports: ['java.time.LocalTime'] };
       case 'datetime':
       case 'timestamp':return { name: 'java.time.LocalDateTime', imports: ['java.time.LocalDateTime'] };
-      case 'uuid':     return { name: 'String', extra: 'uuid' };  // para atributos NO-ID, se representa como String
+      case 'uuid':     return { name: 'String' };
       case 'json':     return { name: 'String' };
       default:         return { name: 'String' };
     }
   }
 
-  function plural(s)  { return s && s.endsWith('s') ? s : `${s}s`; }
-  function snake(s)   { return String(s).replace(/([A-Z])/g, '_$1').replace(/^_/, '').toLowerCase(); }
-  function lcFirst(s) { return s ? s[0].toLowerCase() + s.slice(1) : s; }
-  function cap(s)     { return s ? s[0].toUpperCase() + s.slice(1) : s; }
-  function is1(m)     { return String(m ?? '1').includes('1') && !/[N*]/.test(String(m ?? '')); }
-  function isN(m)     { return /N|\*/.test(String(m ?? '')); }
-
-  // param-case local
+  function plural(s) { return s && s.endsWith('s') ? s : `${s}s`; }
+  function snake(s) { return String(s).replace(/([A-Z])/g, '_$1').replace(/^_/, '').toLowerCase(); }
+  function lcFirst(s) { return (s ? s[0].toLowerCase() + s.slice(1) : s); }
+  function cap(s) { return (s ? s[0].toUpperCase() + s.slice(1) : s); }
+  function toCamel(s) {
+    return String(s || '')
+      .replace(/[_\s]+/g,' ')
+      .trim()
+      .replace(/\b\w/g, c => c.toUpperCase())
+      .replace(/\s+/g,'');
+  }
+  function is1(m) { return /^1$|^0?\.\.?1$/i.test(String(m ?? '').trim()); }
+  function isN(m) { return /^(N|\*|0\.\.N|1\.\.N)$/i.test(String(m ?? '').trim()); }
   function paramCase(s) {
     return String(s || '')
       .trim()
       .replace(/[_\s]+/g, '-')
-      .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
-      .replace(/-+/g, '-')
+      .replace(/([a-z0-9])([A-Z])/g,'$1-$2')
+      .replace(/-+/g,'-')
       .toLowerCase();
   }
 
+  // Inyecta un id si falta
+  function ensureId(c) {
+    const hasId = (c.attributes || []).some(a => a.id);
+    if (!hasId) {
+      c.attributes = [
+        { name: 'id', type: 'long', id: true, nullable: false, unique: false },
+        ...(c.attributes || [])
+      ];
+    }
+    return c;
+  }
+
+  // ====== INPUT NORMALIZATION ======
   function normalizeInput(input) {
     if (!input) throw new Error('modelo vacío');
-    if (input.classes && input.relations) return input;
+
+    // Si ya viene normalizado
+    if (input.classes && input.relations) {
+      input.classes = input.classes
+        .map(c => ({ ...c, name: normalizeName(c.name) }))
+        .filter(c => c.name && (c.attributes?.length > 0) && !isPlaceholderName(c.name))
+        .map(ensureId);
+      return input;
+    }
+
+    if (typeof input === 'string') {
+      try { input = JSON.parse(input); } catch { throw new Error('model no es JSON válido'); }
+    }
 
     const nodes = input.nodeDataArray || [];
     const links = input.linkDataArray || [];
 
+    const isClassNode = (n) => {
+      const cat = (n.category || '').toLowerCase();
+      return cat === 'class' || n.type === 'class' || n.isClass === true || n.kind === 'class' || hasAnyAttributeLike(n);
+    };
+
     const cls = nodes
-      .filter(n => (n.category || '').toLowerCase() === 'class')
-      .map(n => ({
-        name: (n.name || '').trim().replace(/\s+/g, '') || 'Clase',
-        attributes: (n.attributes || []).map(a => ({
-          name: a.name,
-          type: a.type || 'string',
-          id: a.id === true || /^id$/i.test(a.name),
-          nullable: a.nullable !== false,
-          unique: !!a.unique
-        }))
-      }));
+      .filter(isClassNode)
+      .map(n => {
+        const name = normalizeName(n.name);
+        const attributes = extractAttributesFromNode(n);
+        return { name, attributes };
+      })
+      .filter(c => c.name && (c.attributes?.length > 0) && !isPlaceholderName(c.name))
+      .map(ensureId);
 
-    const nameByKey = Object.fromEntries(nodes.map(n => [n.key, (n.name || '').trim().replace(/\s+/g, '')]));
+    // mapa key->nombre para relaciones (sólo nodos con nombre válido)
+    const nameByKey = Object.fromEntries(
+      nodes
+        .map(n => [n.key, normalizeName(n.name)])
+        .filter(([, v]) => v && !isPlaceholderName(v))
+    );
 
-    const rels = links
-      .filter(l => ['associate','aggregation','composition','aggregate','compose','association']
-        .includes((l.category || '').toLowerCase()))
+    const rels = (links || [])
+      .filter(l => l && l.from != null && l.to != null)
       .map(l => ({
         from: nameByKey[l.from],
         to:   nameByKey[l.to],
         kind: 'Associate',
-        fromMult: l.fromMult || l.m1 || l.fromMultiplicity || l.multiplicityFrom || '1',
-        toMult:   l.toMult   || l.m2 || l.toMultiplicity   || l.multiplicityTo   || 'N',
+        fromMult: readMult(l, 'from') ?? '1',
+        toMult:   readMult(l, 'to')   ?? 'N',
         owner: (l.owner || 'from')
       }))
       .filter(r => r.from && r.to);
 
     return { classes: cls, relations: rels };
   }
-  // ====== /HELPERS ======
 
+  function normalizeName(raw) {
+    const txt = String(raw || '').trim();
+    if (!txt) return null;
+    const camel = toCamel(txt);
+    return camel || null;
+  }
+  function isPlaceholderName(name) {
+    const s = String(name || '').toLowerCase();
+    return s === 'clase' || s === 'class';
+  }
+
+  function readMult(link, side) {
+    const candidates = side === 'from'
+      ? ['fromMult','m1','fromMultiplicity','multiplicityFrom','fromText','textFrom','labelFrom']
+      : ['toMult','m2','toMultiplicity','multiplicityTo','toText','textTo','labelTo'];
+    for (const k of candidates) {
+      const v = link[k];
+      const m = normalizeMult(v);
+      if (m) return m;
+    }
+    const allStrings = Object.values(link).filter(v => typeof v === 'string');
+    for (const s of allStrings) {
+      const m = normalizeMult(s);
+      if (m) return m;
+    }
+    return null;
+  }
+  function normalizeMult(v) {
+    if (!v) return null;
+    const s = String(v).trim();
+    if (/^(1|0..1|0\.\.1)$/i.test(s)) return '1';
+    if (/^(\*|N|0..N|1..N|0\.\.N|1\.\.N)$/i.test(s)) return 'N';
+    return null;
+  }
+
+  // --- atributos ---
+  function hasAnyAttributeLike(node) {
+    const candidates = [
+      'attributes','fields','members','attrs','columns','properties','textAttributes',
+      'text','body','content','notes','description','label','value'
+    ];
+    return candidates.some(k => node[k] != null);
+  }
+
+  function extractAttributesFromNode(n) {
+    const objArray = firstExisting(n, ['attributes','fields','members','attrs','columns','properties','textAttributes']);
+    if (Array.isArray(objArray) && objArray.some(x => x && typeof x === 'object')) {
+      return normalizeObjectAttrArray(objArray);
+    }
+    if (Array.isArray(objArray) && objArray.every(s => typeof s === 'string')) {
+      return parseAttributesFromStringLines(objArray);
+    }
+
+    const strProps = collectAllStringProps(n);
+    if (strProps.length) {
+      const afterAttrBlocks = strProps.map(splitAfterAtributos).flat().filter(Boolean);
+      const source = afterAttrBlocks.length ? afterAttrBlocks : strProps;
+      const parsed = parseAttributesFromStringLines(splitToLines(source.join('\n')));
+      if (parsed.length) return parsed;
+    }
+
+    return [];
+  }
+
+  function firstExisting(obj, keys) { for (const k of keys) if (obj[k] != null) return obj[k]; return null; }
+
+  function normalizeObjectAttrArray(arr) {
+    const out = [];
+    for (const a of arr) {
+      if (a == null || typeof a !== 'object') continue;
+
+      const name = pickFirst(a, ['name','nombre','field','attr','column','key','label']);
+      const type = pickFirst(a, ['type','tipo','fieldType','dataType','datatype']);
+      const idRaw = pickFirst(a, ['id','isId','primary','pk','isPrimary','primaryKey']);
+      const nullableRaw = pickFirst(a, ['nullable','null','isNullable','optional']);
+      const requiredRaw = pickFirst(a, ['required','obligatorio']);
+      const uniqueRaw = pickFirst(a, ['unique','isUnique','uniq']);
+
+      const normName = String(name ?? '').trim();
+      if (!normName) continue;
+
+      let normType = type ?? inferTypeFromSample(a.value);
+      normType = normType || 'string';
+
+      const isId = toBool(idRaw) || /^id$/i.test(normName);
+
+      const req = toBool(requiredRaw);
+      let nullable = true;
+      if (req === true) nullable = false;
+      else if (nullableRaw != null) nullable = toBool(nullableRaw);
+
+      const unique = toBool(uniqueRaw);
+
+      out.push({
+        name: normName,
+        type: String(normType),
+        id: !!isId,
+        nullable,
+        unique
+      });
+    }
+    return out;
+  }
+
+  function pickFirst(obj, keys) { for (const k of keys) if (obj[k] != null) return obj[k]; return undefined; }
+  function toBool(v) { if (typeof v === 'boolean') return v; if (v == null) return false; const s = String(v).trim().toLowerCase(); return ['1','y','yes','true','t','si','sí'].includes(s); }
+  function inferTypeFromSample(v) { if (v == null) return null; if (typeof v === 'number') return Number.isInteger(v) ? 'int' : 'double'; if (typeof v === 'boolean') return 'boolean'; return 'string'; }
+
+  function collectAllStringProps(n) {
+    const strings = [];
+    for (const [, v] of Object.entries(n)) {
+      if (typeof v === 'string') strings.push(v);
+      else if (Array.isArray(v)) {
+        v.forEach(it => {
+          if (typeof it === 'string') strings.push(it);
+          else if (it && typeof it === 'object' && typeof it.text === 'string') strings.push(it.text);
+        });
+      } else if (v && typeof v === 'object' && typeof v.text === 'string') {
+        strings.push(v.text);
+      }
+    }
+    return strings;
+  }
+
+  function splitAfterAtributos(s) {
+    const m = String(s).match(/atribut[oa]s?/i);
+    if (!m) return s;
+    return String(s).slice(String(s).indexOf(m[0]) + m[0].length);
+  }
+
+  function splitToLines(big) {
+    return String(big).split(/\r?\n|,|;|\t/g).map(x => x.trim()).filter(Boolean);
+  }
+
+  function parseAttributesFromStringLines(lines) { return lines.flatMap(parseAttributeLine); }
+
+  function parseAttributeLine(line) {
+    const t = String(line || '').trim();
+    if (!t) return [];
+    if (/^(clase|class|campos|propiedades|m[eé]todos|operaciones|atributos)$/i.test(t)) return [];
+    if (/^\W*$/i.test(t)) return [];
+    const cleaned = t.replace(/^[-+#*\u2022•\u25CF]/, '').trim();
+
+    let m = cleaned.match(/^([A-Za-z_]\w*)\s*:\s*([A-Za-z_][\w<>.]*)/);
+    if (!m) m = cleaned.match(/^([A-Za-z_]\w*)\s+([A-Za-z_][\w<>.]*)/);
+
+    if (!m) {
+      const only = cleaned.match(/^([A-Za-z_]\w*)$/);
+      if (!only) return [];
+      const nm = only[1];
+      return [{ name: nm, type: 'string', id: /^id$/i.test(nm), nullable: true, unique: false }];
+    }
+    const name = m[1];
+    const type = (m[2] || 'string');
+    return [{ name, type, id: /^id$/i.test(name), nullable: true, unique: false }];
+  }
+
+  // ====== PATHS ======
   const root = `${artifactId}/`;
   const javaBase = `${root}src/main/java/${groupId.replace(/\./g, '/')}/${artifactId}/`;
   const resBase  = `${root}src/main/resources/`;
@@ -119,16 +306,16 @@ function generateSpringBootProject(model, { groupId = 'com.example', artifactId 
   const pCtrl   = `${javaBase}web/controller/`;
   const pDto    = `${javaBase}web/dto/`;
 
-  for (const c of m.classes) {
+  for (const c0 of m.classes) {
+    const c = { ...c0, name: toCamel(c0.name) };
     files[`${pEntity}${c.name}.java`]         = entityJava(groupId, artifactId, c, m);
     files[`${pRepo}${c.name}Repository.java`] = repoJava(groupId, artifactId, c);
-    files[`${pDto}${c.name}RequestDTO.java`]  = dtoJava(groupId, artifactId, c, 'Request');  // sin id
-    files[`${pDto}${c.name}ResponseDTO.java`] = dtoJava(groupId, artifactId, c, 'Response'); // con id
+    files[`${pDto}${c.name}RequestDTO.java`]  = dtoJava(groupId, artifactId, c, 'Request');
+    files[`${pDto}${c.name}ResponseDTO.java`] = dtoJava(groupId, artifactId, c, 'Response');
     files[`${pSvc}${c.name}Service.java`]     = serviceJava(groupId, artifactId, c);
     files[`${pCtrl}${c.name}Controller.java`] = controllerJava(groupId, artifactId, c);
   }
 
-  // === Archivos extra: Postman y HTTP ===
   files[`${root}postman/${artifactId}-api.postman_collection.json`] = postmanCollection(artifactId, m);
   files[`${root}http/${artifactId}.http`]                           = httpClientFile(m);
 
@@ -146,51 +333,23 @@ function generateSpringBootProject(model, { groupId = 'com.example', artifactId 
   <version>0.0.1-SNAPSHOT</version>
   <name>${artifactId}</name>
   <description>Generated by Diagram-to-SpringBoot</description>
-
   <parent>
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-parent</artifactId>
     <version>3.3.2</version>
   </parent>
-
   <properties><java.version>21</java.version></properties>
-
   <dependencies>
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-web</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-data-jpa</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-validation</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>com.h2database</groupId>
-      <artifactId>h2</artifactId>
-      <scope>runtime</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.projectlombok</groupId>
-      <artifactId>lombok</artifactId>
-      <optional>true</optional>
-    </dependency>
-    <dependency>
-      <groupId>org.springdoc</groupId>
-      <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-      <version>2.6.0</version>
-    </dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-jpa</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-validation</artifactId></dependency>
+    <dependency><groupId>com.h2database</groupId><artifactId>h2</artifactId><scope>runtime</scope></dependency>
+    <dependency><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId><optional>true</optional></dependency>
+    <dependency><groupId>org.springdoc</groupId><artifactId>springdoc-openapi-starter-webmvc-ui</artifactId><version>2.6.0</version></dependency>
   </dependencies>
-
   <build>
     <plugins>
-      <plugin>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-maven-plugin</artifactId>
-      </plugin>
+      <plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin>
     </plugins>
   </build>
 </project>
@@ -239,16 +398,10 @@ public class Application {
       const tLower = (a.type || '').toLowerCase();
 
       if (a.id) {
-        // Forzamos SIEMPRE autoincremental numérico
         anns.push('@Id');
-        if (tLower === 'int' || tLower === 'integer') {
-          anns.push('@GeneratedValue(strategy = GenerationType.IDENTITY)');
-        } else if (tLower === 'long' || tLower === 'bigint' || tLower === 'number') {
-          anns.push('@GeneratedValue(strategy = GenerationType.IDENTITY)');
-        } else {
-          // Si viene uuid/string/vacío -> convertimos el tipo a long y usamos IDENTITY
+        anns.push('@GeneratedValue(strategy = GenerationType.IDENTITY)');
+        if (!(tLower === 'int' || tLower === 'integer' || tLower === 'long' || tLower === 'bigint' || tLower === 'number')) {
           a.type = 'long';
-          anns.push('@GeneratedValue(strategy = GenerationType.IDENTITY)');
         }
       }
 
@@ -256,7 +409,7 @@ public class Application {
         const opts = [ a.unique && 'unique = true', a.nullable === false && 'nullable = false' ].filter(Boolean).join(', ');
         anns.push(`@Column(${opts})`);
       }
-      // Recalcular mapped si cambiamos a.type arriba
+
       const mappedNow = mapType(a.type);
       if (mappedNow.imports) mappedNow.imports.forEach(i => imports.add(i));
 
@@ -273,52 +426,38 @@ public class Application {
       const mine = amIFrom ? r.fromMult : r.toMult;
       const theirs = amIFrom ? r.toMult : r.fromMult;
 
-      // dueño determinístico (para N<->N o 1<->1 si owner no viene)
       const ownerDeterministic = (lhs, rhs) => lhs.localeCompare(rhs) < 0;
       const ownerToken = (r.owner || '').toLowerCase();
       const ownerIsThisRaw = amIFrom ? ownerToken === 'from' : ownerToken === 'to';
       const ownerIsThis = (isN(mine) && isN(theirs)) || (is1(mine) && is1(theirs))
         ? (ownerToken ? ownerIsThisRaw : ownerDeterministic(c.name, other))
-        : null; // en 1<->N ignoramos owner: el lado N es el dueño
+        : null;
 
       imports.add(`${groupId}.${artifactId}.domain.entity.${other}`);
 
-      // 1 ↔ N (regla fija: el lado N tiene @ManyToOne y es el dueño)
       if (isN(mine) && is1(theirs)) {
         fields.push(`
   @ManyToOne
   @JoinColumn(name = "${snake(other)}_id")
   private ${other} ${lcFirst(other)};`);
       } else if (is1(mine) && isN(theirs)) {
-        imports.add('java.util.List'); imports.add('java.util.ArrayList');
         fields.push(`
   @OneToMany(mappedBy = "${lcFirst(c.name)}")
-  private List<${other}> ${lcFirst(plural(other))} = new ArrayList<>();`);
-      }
-      // N ↔ N
-      else if (isN(mine) && isN(theirs)) {
-        imports.add('java.util.Set'); imports.add('java.util.HashSet');
-        if (ownerIsThis) {
-          fields.push(`
-  @ManyToMany
-  @JoinTable(
+  private java.util.List<${other}> ${lcFirst(plural(other))} = new java.util.ArrayList<>();`);
+      } else if (isN(mine) && isN(theirs)) {
+        fields.push(`
+  @ManyToMany${ownerIsThis ? '' : `(mappedBy = "${lcFirst(plural(c.name))}")`}
+  ${ownerIsThis ? `@JoinTable(
     name = "${snake(plural(c.name))}_${snake(plural(other))}",
     joinColumns = @JoinColumn(name = "${snake(c.name)}_id"),
     inverseJoinColumns = @JoinColumn(name = "${snake(other)}_id")
-  )
-  private Set<${other}> ${lcFirst(plural(other))} = new HashSet<>();`);
-        } else {
-          fields.push(`
-  @ManyToMany(mappedBy = "${lcFirst(plural(c.name))}")
-  private Set<${other}> ${lcFirst(plural(other))} = new HashSet<>();`);
-        }
-      }
-      // 1 ↔ 1
-      else if (is1(mine) && is1(theirs)) {
+  )` : ''}
+  private java.util.Set<${other}> ${lcFirst(plural(other))} = new java.util.HashSet<>();`);
+      } else if (is1(mine) && is1(theirs)) {
         if (ownerIsThis) {
           fields.push(`
   @OneToOne
-  @JoinColumn(name = "${snake(other)}_id")
+  @JoinColumn(name = "${snake(other)}_id", unique = true)
   private ${other} ${lcFirst(other)};`);
         } else {
           fields.push(`
@@ -354,14 +493,13 @@ import ${entityPkg};
 public interface ${c.name}Repository extends JpaRepository<${c.name}, ${idT}> {}
 `; }
 
-  // DTOs
   function dtoJava(groupId, artifactId, c, kind) {
     const pkg = `${groupId}.${artifactId}.web.dto`;
     const imports = new Set(['lombok.Data', 'lombok.NoArgsConstructor']);
     const fields = [];
 
     for (const a of (c.attributes || [])) {
-      if (kind === 'Request' && a.id) continue; // no mandar id en requests
+      if (kind === 'Request' && a.id) continue;
       const mapped = mapType(a.type);
       if (mapped.imports) mapped.imports.forEach(i => imports.add(i));
       fields.push(`  private ${mapped.name} ${a.name};`);
@@ -488,7 +626,7 @@ public class ${c.name}Controller {
   // ============ Postman & HTTP generators ============
   function sampleValue(attr) {
     const t = (attr.type || 'string').toLowerCase();
-    if (attr.id) return undefined; // no incluir id en Request
+    if (attr.id) return undefined;
     switch (t) {
       case 'int':
       case 'integer': return 1;
@@ -532,9 +670,7 @@ public class ${c.name}Controller {
             url: { raw: `{{baseUrl}}${base}${urlSuffix}`, host: ['{{baseUrl}}'], path: [base.replace(/^\//,'')].concat(urlSuffix.replace(/^\//,'').split('/').filter(Boolean)) }
           }
         };
-        if (hasBody) {
-          r.request.body = { mode: 'raw', raw: JSON.stringify(body, null, 2) };
-        }
+        if (hasBody) r.request.body = { mode: 'raw', raw: JSON.stringify(body, null, 2) };
         return r;
       }
 
@@ -551,11 +687,7 @@ public class ${c.name}Controller {
     });
 
     const collection = {
-      info: {
-        _postman_id: '00000000-0000-0000-0000-000000000000',
-        name: `${artifactId}-api`,
-        schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json'
-      },
+      info: { _postman_id: '00000000-0000-0000-0000-000000000000', name: `${artifactId}-api`, schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
       item: items,
       variable: [{ key: 'baseUrl', value: 'http://localhost:8080' }]
     };
